@@ -1,26 +1,34 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/*******************************************************************************
+ * Copyright (c) 2013, Salesforce.com, Inc. All rights reserved. Redistribution and use in source
+ * and binary forms, with or without modification, are permitted provided that the following
+ * conditions are met: Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer. Redistributions in binary form must reproduce
+ * the above copyright notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution. Neither the name of
+ * Salesforce.com nor the names of its contributors may be used to endorse or promote products
+ * derived from this software without specific prior written permission. THIS SOFTWARE IS PROVIDED
+ * BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+ * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
+ * OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+ * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
 package org.apache.phoenix.coprocessor;
 
 
 import static org.apache.phoenix.query.QueryConstants.AGG_TIMESTAMP;
 import static org.apache.phoenix.query.QueryConstants.SINGLE_COLUMN;
 import static org.apache.phoenix.query.QueryConstants.SINGLE_COLUMN_FAMILY;
+<<<<<<< HEAD
+import static org.apache.phoenix.query.QueryServices.GROUPBY_ESTIMATED_DISTINCT_VALUES_ATTRIB;
+import static org.apache.phoenix.query.QueryServices.GROUPBY_SPILLABLE_ATTRIB;
+import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_GROUPBY_ESTIMATED_DISTINCT_VALUES;
+import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_GROUPBY_SPILLABLE;
+=======
+>>>>>>> HBaseSpillableGroupBy
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -32,8 +40,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+<<<<<<< HEAD
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Cell;
+=======
+>>>>>>> HBaseSpillableGroupBy
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Scan;
@@ -41,18 +52,28 @@ import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.regionserver.HRegion;
+import org.apache.hadoop.hbase.regionserver.MultiVersionConsistencyControl;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.WritableUtils;
+<<<<<<< HEAD
+import org.apache.phoenix.cache.GlobalCache;
+import org.apache.phoenix.cache.TenantCache;
+import org.apache.phoenix.cache.aggcache.SpillableGroupByCache;
+=======
+>>>>>>> HBaseSpillableGroupBy
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.ExpressionType;
 import org.apache.phoenix.expression.aggregator.Aggregator;
 import org.apache.phoenix.expression.aggregator.ServerAggregators;
 import org.apache.phoenix.join.HashJoinInfo;
 import org.apache.phoenix.join.ScanProjector;
+<<<<<<< HEAD
+import org.apache.phoenix.memory.GlobalMemoryManager;
+import org.apache.phoenix.memory.MemoryManager.MemoryChunk;
+=======
+>>>>>>> HBaseSpillableGroupBy
 import org.apache.phoenix.query.QueryConstants;
-import org.apache.phoenix.query.QueryServicesImpl;
-import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.schema.tuple.MultiKeyValueTuple;
 import org.apache.phoenix.util.KeyValueUtil;
 import org.apache.phoenix.util.ScanUtil;
@@ -61,12 +82,17 @@ import org.apache.phoenix.util.TupleUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+<<<<<<< HEAD
+import com.google.common.collect.Maps;
+import com.google.common.io.Closeables;
+=======
 import com.google.common.io.Closeables;
 
+>>>>>>> HBaseSpillableGroupBy
 
 /**
  * Region observer that aggregates grouped rows (i.e. SQL query with GROUP BY clause)
- * 
+ * @author jtaylor
  * @since 0.1
  */
 public class GroupedAggregateRegionObserver extends BaseScannerRegionObserver {
@@ -174,6 +200,56 @@ public class GroupedAggregateRegionObserver extends BaseScannerRegionObserver {
     }
 
 
+<<<<<<< HEAD
+                @Override
+                public void close() throws IOException {
+                    try {
+                        s.close();
+                    } finally {
+                        InMemoryGroupByCache.this.close();
+                    }
+                }
+
+                @Override
+                public boolean next(List<Cell> results) throws IOException {
+                    if (index >= aggResults.size()) return false;
+                    results.add(aggResults.get(index));
+                    index++;
+                    return index < aggResults.size();
+                }
+
+                @Override
+                public long getMaxResultSize() {
+                	return s.getMaxResultSize();
+                }
+            };
+        }
+
+        @Override
+        public int size() {
+            return aggregateMap.size();
+        }
+        
+    }
+    private static final class GroupByCacheFactory {
+        public static final GroupByCacheFactory INSTANCE = new GroupByCacheFactory();
+        
+        private GroupByCacheFactory() {
+        }
+        
+        GroupByCache newCache(RegionCoprocessorEnvironment env, ImmutableBytesWritable tenantId, ServerAggregators aggregators, int estDistVals) {
+            Configuration conf = env.getConfiguration();
+            boolean spillableEnabled =
+                    conf.getBoolean(GROUPBY_SPILLABLE_ATTRIB, DEFAULT_GROUPBY_SPILLABLE);
+            if (spillableEnabled) {
+                return new SpillableGroupByCache(env, tenantId, aggregators, estDistVals);
+            } 
+            
+            return new InMemoryGroupByCache(env, tenantId, aggregators, estDistVals);
+        }
+    }
+=======
+>>>>>>> HBaseSpillableGroupBy
     /**
      * Used for an aggregate query in which the key order does not necessarily match the group by
      * key order. In this case, we must collect all distinct groups within a region into a map,
@@ -188,7 +264,7 @@ public class GroupedAggregateRegionObserver extends BaseScannerRegionObserver {
         }
         RegionCoprocessorEnvironment env = c.getEnvironment();
         Configuration conf = env.getConfiguration();
-        int estDistVals = conf.getInt(QueryServicesImpl.GROUPBY_ESTIMATED_DISTINCT_VALUES_ATTRIB, QueryServicesOptions.DEFAULT_GROUPBY_ESTIMATED_DISTINCT_VALUES);
+        int estDistVals = conf.getInt(GROUPBY_ESTIMATED_DISTINCT_VALUES_ATTRIB, DEFAULT_GROUPBY_ESTIMATED_DISTINCT_VALUES);
         byte[] estDistValsBytes = scan.getAttribute(BaseScannerRegionObserver.ESTIMATED_DISTINCT_VALUES);
         if (estDistValsBytes != null) {
             // Allocate 1.5x estimation
@@ -196,7 +272,14 @@ public class GroupedAggregateRegionObserver extends BaseScannerRegionObserver {
                             (int) (Bytes.toInt(estDistValsBytes) * 1.5f));
         }
 
+<<<<<<< HEAD
+        final boolean spillableEnabled =
+                conf.getBoolean(GROUPBY_SPILLABLE_ATTRIB, DEFAULT_GROUPBY_SPILLABLE);
+
+=======
+        RegionCoprocessorEnvironment env = c.getEnvironment();
         // Get a cache implementation
+>>>>>>> HBaseSpillableGroupBy
         GroupByCache groupByCache = 
                 GroupByCacheFactory.newCache(
                         env, ScanUtil.getTenantId(scan), 

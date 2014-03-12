@@ -75,6 +75,7 @@ import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.VIEW_TYPE;
 
 import java.math.BigDecimal;
 
+import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -219,6 +220,11 @@ public interface QueryConstants {
             INCREMENT_BY  + " BIGINT NOT NULL, \n" + 
             CACHE_SIZE  + " BIGINT NOT NULL \n" + 
     		" CONSTRAINT " + SYSTEM_TABLE_PK_NAME + " PRIMARY KEY (" + TENANT_ID + "," + SEQUENCE_SCHEMA + "," + SEQUENCE_NAME + "))\n" + 
-    		HConstants.VERSIONS + "=" + MetaDataProtocol.DEFAULT_MAX_META_DATA_VERSIONS + "\n";
-	
+            HConstants.VERSIONS + "=" + MetaDataProtocol.DEFAULT_MAX_META_DATA_VERSIONS + "\n";
+
+    // Temp table to store spilled elements for group by
+    public static final String CREATE_TABLE_SPILLABLE_CACHE = 
+            "CREATE TABLE SYSTEM.SPILLABLE_CACHE(k VARBINARY PRIMARY KEY) " +
+            HConstants.VERSIONS + "=" + Integer.MAX_VALUE + "," +
+            HColumnDescriptor.DATA_BLOCK_ENCODING + "= 'NONE'";    
 }

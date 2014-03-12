@@ -102,10 +102,14 @@ public class QueryServicesOptions {
     public static final long DEFAULT_MAX_SPOOL_TO_DISK_BYTES = 1024000000;
     
     // 
-    // Spillable GroupBy - SPGBY prefix
+    // GroupBy cache enum
+    // Default is in memory cache
     //
-    // Enable / disable spillable group by
-    public static boolean DEFAULT_GROUPBY_SPILLABLE = true;
+    //public enum CacheType { GROUPBY_INMEMORY, GROUPBY_SPILLABLE, GROUPBY_HBASE  };
+    public static final int GROUPBY_INMEMORY = 0;
+    public static final int GROUPBY_SPILLABLE = 1;
+    public static final int GROUPBY_HBASE = 2;
+    public static final int DEFAULT_GROUPBY_SPILLABLE = GROUPBY_INMEMORY;
     // Number of spill files / partitions the keys are distributed to
     // Each spill file fits 2GB of data
     public static final int DEFAULT_GROUPBY_SPILL_FILES = 2;
@@ -168,7 +172,7 @@ public class QueryServicesOptions {
             .setIfUnset(INDEX_MUTATE_BATCH_SIZE_THRESHOLD_ATTRIB, DEFAULT_INDEX_MUTATE_BATCH_SIZE_THRESHOLD)
             .setIfUnset(MAX_SPOOL_TO_DISK_BYTES_ATTRIB, DEFAULT_MAX_SPOOL_TO_DISK_BYTES)
             .setIfUnset(DROP_METADATA_ATTRIB, DEFAULT_DROP_METADATA)
-            .setIfUnset(GROUPBY_SPILLABLE_ATTRIB, DEFAULT_GROUPBY_SPILLABLE)
+            .setIfUnset(GROUPBY_SPILLABLE_ATTRIB, GROUPBY_INMEMORY)
             .setIfUnset(GROUPBY_MAX_CACHE_SIZE_ATTRIB, DEFAULT_GROUPBY_MAX_CACHE_MAX)
             .setIfUnset(GROUPBY_SPILL_FILES_ATTRIB, DEFAULT_GROUPBY_SPILL_FILES)
             .setIfUnset(SEQUENCE_CACHE_SIZE_ATTRIB, DEFAULT_SEQUENCE_CACHE_SIZE)
@@ -203,7 +207,7 @@ public class QueryServicesOptions {
         config.setIfUnset(name, Long.toString(value));
         return this;
     }
-    
+        
     private QueryServicesOptions setIfUnset(String name, String value) {
         config.setIfUnset(name, value);
         return this;
@@ -374,11 +378,7 @@ public class QueryServicesOptions {
     public boolean isDropMetaData() {
         return config.getBoolean(DROP_METADATA_ATTRIB, DEFAULT_DROP_METADATA);
     }
-    
-    public boolean isSpillableGroupByEnabled() {
-        return config.getBoolean(GROUPBY_SPILLABLE_ATTRIB, DEFAULT_GROUPBY_SPILLABLE);
-    }
-    
+        
     public long getSpillableGroupByMaxCacheSize() {
         return config.getLong(GROUPBY_MAX_CACHE_SIZE_ATTRIB, DEFAULT_GROUPBY_MAX_CACHE_MAX);
     }

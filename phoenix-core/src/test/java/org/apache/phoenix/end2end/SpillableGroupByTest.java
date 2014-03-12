@@ -31,18 +31,19 @@ import java.sql.Statement;
 import java.util.Map;
 import java.util.Properties;
 
+import org.apache.phoenix.query.QueryServices;
+import org.apache.phoenix.query.QueryServicesOptions;
+import org.apache.phoenix.util.PhoenixRuntime;
+import org.apache.phoenix.util.ReadOnlyProps;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.google.common.collect.Maps;
-import org.apache.phoenix.query.QueryServices;
-import org.apache.phoenix.util.PhoenixRuntime;
-import org.apache.phoenix.util.ReadOnlyProps;
 
 public class SpillableGroupByTest extends BaseConnectedQueryTest {
 
     private static final int NUM_ROWS_INSERTED = 1000;
-    
+
     // covers: COUNT, COUNT(DISTINCT) SUM, AVG, MIN, MAX 
     private static String GROUPBY1 = "select "
             + "count(*), count(distinct uri), sum(appcpu), avg(appcpu), uri, min(id), max(id) from "
@@ -56,7 +57,7 @@ public class SpillableGroupByTest extends BaseConnectedQueryTest {
         // Set a very small cache size to force plenty of spilling
         props.put(QueryServices.GROUPBY_MAX_CACHE_SIZE_ATTRIB,
                 Integer.toString(1));
-        props.put(QueryServices.GROUPBY_SPILLABLE_ATTRIB, String.valueOf(true));
+        props.put(QueryServices.GROUPBY_SPILLABLE_ATTRIB, Integer.toString(QueryServicesOptions.GROUPBY_HBASE));
         props.put(QueryServices.GROUPBY_SPILL_FILES_ATTRIB,
                 Integer.toString(1));
 

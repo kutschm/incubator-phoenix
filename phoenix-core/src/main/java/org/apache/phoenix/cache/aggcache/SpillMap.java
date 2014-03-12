@@ -1,22 +1,5 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.apache.phoenix.cache.aggcache;
+
 
 import java.io.IOException;
 import java.nio.BufferOverflowException;
@@ -30,6 +13,8 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
+import org.apache.phoenix.schema.tuple.Tuple;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
@@ -37,16 +22,13 @@ import com.google.common.collect.Maps;
 import com.google.common.hash.BloomFilter;
 import com.google.common.hash.Funnels;
 
-import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
-
 /**
  * Class implements an active spilled partition serialized tuples are first written into an in-memory data structure
  * that represents a single page. As the page fills up, it is written to the current spillFile or spill partition For
  * fast tuple discovery, the class maintains a per page bloom-filter and never de-serializes elements. The element
  * spilling employs an extentible hashing technique.
  */
-public class SpillMap extends AbstractMap<ImmutableBytesPtr, byte[]> implements Iterable<byte[]> {
-
+public class SpillMap extends AbstractMap<ImmutableBytesPtr, byte[]> implements Iterable<Tuple> {
     // Threshold is typically the page size
     private final int thresholdBytes;
     private final int pageInserts;
@@ -460,10 +442,10 @@ public class SpillMap extends AbstractMap<ImmutableBytesPtr, byte[]> implements 
      * Iterate over all spilled elements, including the ones that are currently paged into memory
      */
     @Override
-    public Iterator<byte[]> iterator() {
+    public Iterator<Tuple> iterator() {
         directory[curMapBufferIndex].flushBuffer();
 
-        return new Iterator<byte[]>() {
+        return new Iterator<Tuple>() {
             int pageIndex = 0;
             Iterator<byte[]> entriesIter = directory[pageIndex].getPageMapEntries();
             HashSet<Integer> dups = new HashSet<Integer>();
@@ -493,19 +475,23 @@ public class SpillMap extends AbstractMap<ImmutableBytesPtr, byte[]> implements 
             }
 
             @Override
-            public byte[] next() {
-                // get elements from in memory map first
-                return entriesIter.next();
+            public Tuple next() {
+                try {
+                    // get elements from in memory map first
+                    return SpillManager.getTuple(entriesIter.next());
+                }
+                catch(IOException ioe) {
+                    throw new RuntimeException(ioe);
+                }
             }
 
             @Override
             public void remove() {
-                throw new IllegalAccessError("Iterator does not support removal operation");
+                throw new IllegalAccessError("entrySet is not supported for this type of cache");
             }
         };
     }
 
-    // TODO implement this method to make the SpillMap a true Map implementation
     @Override
     public Set<java.util.Map.Entry<ImmutableBytesPtr, byte[]>> entrySet() {
         throw new IllegalAccessError("entrySet is not supported for this type of cache");

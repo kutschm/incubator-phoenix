@@ -1,62 +1,48 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
+/*******************************************************************************
+ * Copyright (c) 2013, Salesforce.com, Inc. All rights reserved. Redistribution and use in source and binary forms, with
+ * or without modification, are permitted provided that the following conditions are met: Redistributions of source code
+ * must retain the above copyright notice, this list of conditions and the following disclaimer. Redistributions in
+ * binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution. Neither the name of Salesforce.com nor the names
+ * of its contributors may be used to endorse or promote products derived from this software without specific prior
+ * written permission. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+ * INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+ * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ ******************************************************************************/
 package org.apache.phoenix.cache.aggcache;
-
-import static org.apache.phoenix.query.QueryConstants.AGG_TIMESTAMP;
-import static org.apache.phoenix.query.QueryConstants.SINGLE_COLUMN;
-import static org.apache.phoenix.query.QueryConstants.SINGLE_COLUMN_FAMILY;
-import static org.apache.phoenix.query.QueryServices.GROUPBY_MAX_CACHE_SIZE_ATTRIB;
-import static org.apache.phoenix.query.QueryServices.GROUPBY_SPILL_FILES_ATTRIB;
-import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_GROUPBY_MAX_CACHE_MAX;
-import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_GROUPBY_SPILL_FILES;
 
 import java.io.IOException;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.coprocessor.BaseRegionScanner;
+import org.apache.phoenix.coprocessor.GroupByCache;
+import org.apache.phoenix.expression.Expression;
+import org.apache.phoenix.expression.aggregator.Aggregator;
+import org.apache.phoenix.expression.aggregator.ServerAggregators;
+import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
+import org.apache.phoenix.query.QueryConstants;
+import org.apache.phoenix.query.QueryServices;
+import org.apache.phoenix.query.QueryServicesOptions;
+import org.apache.phoenix.schema.tuple.SingleKeyValueTuple;
+import org.apache.phoenix.schema.tuple.Tuple;
+import org.apache.phoenix.util.KeyValueUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.io.Closeables;
-import org.apache.phoenix.cache.GlobalCache;
-import org.apache.phoenix.cache.TenantCache;
-import org.apache.phoenix.cache.aggcache.SpillManager.CacheEntry;
-import org.apache.phoenix.coprocessor.BaseRegionScanner;
-import org.apache.phoenix.coprocessor.GroupByCache;
-import org.apache.phoenix.coprocessor.GroupedAggregateRegionObserver;
-import org.apache.phoenix.expression.aggregator.Aggregator;
-import org.apache.phoenix.expression.aggregator.ServerAggregators;
-import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
-import org.apache.phoenix.memory.InsufficientMemoryException;
-import org.apache.phoenix.memory.MemoryManager.MemoryChunk;
-import org.apache.phoenix.util.KeyValueUtil;
 
 /**
  * The main entry point is in GroupedAggregateRegionObserver. It instantiates a SpillableGroupByCache and invokes a
@@ -93,21 +79,9 @@ import org.apache.phoenix.util.KeyValueUtil;
  * next value is computed. In case the key is not found on any page, the Loader create new aggregators for it.
  */
 
-public class SpillableGroupByCache implements GroupByCache {
+public class SpillableGroupByCache extends GroupByCache {
 
     private static final Logger logger = LoggerFactory.getLogger(SpillableGroupByCache.class);
-
-    // Min size of 1st level main memory cache in bytes --> lower bound
-    private static final int SPGBY_CACHE_MIN_SIZE = 4096; // 4K
-
-    // TODO Generally better to use Collection API with generics instead of
-    // array types
-    private final LinkedHashMap<ImmutableBytesWritable, Aggregator[]> cache;
-    private SpillManager spillManager = null;
-    private int curNumCacheElements;
-    private final ServerAggregators aggregators;
-    private final RegionCoprocessorEnvironment env;
-    private final MemoryChunk chunk;
 
     /*
      * inner class that makes cache queryable for other classes that should not get the full instance. Queryable view of
@@ -128,91 +102,16 @@ public class SpillableGroupByCache implements GroupByCache {
      * @param ctxt
      */
     public SpillableGroupByCache(final RegionCoprocessorEnvironment env, ImmutableBytesWritable tenantId,
-            ServerAggregators aggs, final int estSizeNum) {
-        curNumCacheElements = 0;
-        this.aggregators = aggs;
-        this.env = env;
+            ServerAggregators aggs, final int estSizeNum, List<Expression> expressions) {
+        super(env, tenantId, aggs, estSizeNum, expressions);
 
-        final int estValueSize = aggregators.getEstimatedByteSize();
-        final TenantCache tenantCache = GlobalCache.getTenantCache(env, tenantId);
-
-        // Compute Map initial map
         final Configuration conf = env.getConfiguration();
-        final long maxCacheSizeConf = conf.getLong(GROUPBY_MAX_CACHE_SIZE_ATTRIB, DEFAULT_GROUPBY_MAX_CACHE_MAX);
-        final int numSpillFilesConf = conf.getInt(GROUPBY_SPILL_FILES_ATTRIB, DEFAULT_GROUPBY_SPILL_FILES);
+        final int numSpillFilesConf = conf.getInt(QueryServices.GROUPBY_SPILL_FILES_ATTRIB,
+                QueryServicesOptions.DEFAULT_GROUPBY_SPILL_FILES);
 
-        final int maxSizeNum = (int)(maxCacheSizeConf / estValueSize);
-        final int minSizeNum = (SPGBY_CACHE_MIN_SIZE / estValueSize);
-
-        // use upper and lower bounds for the cache size
-        final int maxCacheSize = Math.max(minSizeNum, Math.min(maxSizeNum, estSizeNum));
-        final int estSize = GroupedAggregateRegionObserver.sizeOfUnorderedGroupByMap(maxCacheSize, estValueSize);
-        try {
-            this.chunk = tenantCache.getMemoryManager().allocate(estSize);
-        } catch (InsufficientMemoryException ime) {
-            logger.error("Requested Map size exceeds memory limit, please decrease max size via config paramter: "
-                    + GROUPBY_MAX_CACHE_SIZE_ATTRIB);
-            throw ime;
-        }
-
-        if (logger.isDebugEnabled()) {
-            logger.debug("Instantiating LRU groupby cache of element size: " + maxCacheSize);
-        }
-
-        // LRU cache implemented as LinkedHashMap with access order
-        cache = new LinkedHashMap<ImmutableBytesWritable, Aggregator[]>(maxCacheSize, 0.75f, true) {
-            boolean spill = false;
-            int cacheSize = maxCacheSize;
-
-            @Override
-            protected boolean removeEldestEntry(Map.Entry<ImmutableBytesWritable, Aggregator[]> eldest) {
-                if (!spill && size() > cacheSize) { // increase allocation
-                    cacheSize *= 1.5f;
-                    int estSize = GroupedAggregateRegionObserver.sizeOfUnorderedGroupByMap(cacheSize, estValueSize);
-                    try {
-                        chunk.resize(estSize);
-                    } catch (InsufficientMemoryException im) {
-                        // Cannot extend Map anymore, start spilling
-                        spill = true;
-                    }
-                }
-
-                if (spill) {
-                    try {
-                        if (spillManager == null) {
-                            // Lazy instantiation of spillable data
-                            // structures
-                            //
-                            // Only create spill data structs if LRU
-                            // cache is too small
-                            spillManager = new SpillManager(numSpillFilesConf, aggregators, env.getConfiguration(),
-                                    new QueryCache());
-                        }
-                        spillManager.spill(eldest.getKey(), eldest.getValue());
-                        // keep track of elements in cache
-                        curNumCacheElements--;
-                    } catch (IOException ioe) {
-                        // Ensure that we always close and delete the temp files
-                        try {
-                            throw new RuntimeException(ioe);
-                        } finally {
-                            Closeables.closeQuietly(SpillableGroupByCache.this);
-                        }
-                    }
-                    return true;
-                }
-
-                return false;
-            }
-        };
-    }
-
-    /**
-     * Size function returns the estimate LRU cache size in bytes
-     */
-    @Override
-    public int size() {
-        return curNumCacheElements * aggregators.getEstimatedByteSize();
+        // TODO lazy instantiation
+        spillManager = new SpillManager(numSpillFilesConf, aggregators, env.getConfiguration(), new QueryCache());
+        initCache();
     }
 
     /**
@@ -227,7 +126,7 @@ public class SpillableGroupByCache implements GroupByCache {
             // If Aggregators not found for this distinct
             // value, clone our original one (we need one
             // per distinct value)
-            if (spillManager != null) {
+            if (spillManager.initialized()) {
                 // Spill manager present, check if key has been
                 // spilled before
                 try {
@@ -261,9 +160,9 @@ public class SpillableGroupByCache implements GroupByCache {
      * extracted from the LRU cache or from the spillable data structures.The key/value tuples are returned in
      * non-deterministic order.
      */
-    private final class EntryIterator implements Iterator<Map.Entry<ImmutableBytesWritable, Aggregator[]>> {
+    private final class EntryIterator implements Iterator<Tuple> {
         final Iterator<Map.Entry<ImmutableBytesWritable, Aggregator[]>> cacheIter;
-        final Iterator<byte[]> spilledCacheIter;
+        final Iterator<Tuple> spilledCacheIter;
 
         private EntryIterator() {
             cacheIter = cache.entrySet().iterator();
@@ -280,41 +179,49 @@ public class SpillableGroupByCache implements GroupByCache {
         }
 
         @Override
-        public Map.Entry<ImmutableBytesWritable, Aggregator[]> next() {
+        public Tuple next() {
             if (spilledCacheIter != null && spilledCacheIter.hasNext()) {
-                try {
-                    byte[] value = spilledCacheIter.next();
-                    // Deserialize into a CacheEntry
-                    Map.Entry<ImmutableBytesWritable, Aggregator[]> spilledEntry = spillManager.toCacheEntry(value);
-
-                    boolean notFound = false;
-                    // check against map and return only if not present
-                    while (cache.containsKey(spilledEntry.getKey())) {
-                        // LRU Cache entries always take precedence,
-                        // since they are more up to date
-                        if (spilledCacheIter.hasNext()) {
-                            value = spilledCacheIter.next();
-                            spilledEntry = spillManager.toCacheEntry(value);
-                        } else {
-                            notFound = true;
-                            break;
-                        }
+                Tuple spilledTuple = spilledCacheIter.next();
+                // Deserialize into a CacheEntry
+                boolean notFound = false;
+                // check against map and return only if not present
+                ImmutableBytesPtr key = new ImmutableBytesPtr();
+                spilledTuple.getKey(key);
+                while (cache.containsKey(key)) {
+                    // LRU Cache entries always take precedence,
+                    // since they are more up to date
+                    if (spilledCacheIter.hasNext()) {
+                        logger.error("spillNext");
+                        spilledTuple = spilledCacheIter.next();
+                        spilledTuple.getKey(key);
+                        // spilledEntry = spillManager.toCacheEntry(value);
+                    } else {
+                        notFound = true;
+                        break;
                     }
-                    if (!notFound) {
-                        // Return a spilled entry, this only happens if the
-                        // entry was not
-                        // found in the LRU cache
-                        return spilledEntry;
-                    }
-                } catch (IOException ioe) {
-                    // TODO rework error handling
-                    throw new RuntimeException(ioe);
+                }
+                if (!notFound) {
+                    // Return a spilled entry, this only happens if the
+                    // entry was not
+                    // found in the LRU cache
+                    return spilledTuple;
                 }
             }
             // Spilled elements exhausted
             // Finally return all elements from LRU cache
-            Map.Entry<ImmutableBytesWritable, Aggregator[]> entry = cacheIter.next();
-            return new CacheEntry<ImmutableBytesWritable>(entry.getKey(), entry.getValue());
+            // return cacheIter.next();
+            Map.Entry<ImmutableBytesWritable, Aggregator[]> ce = cacheIter.next();
+            ImmutableBytesWritable key = ce.getKey();
+            Aggregator[] aggs = ce.getValue();
+            byte[] value = aggregators.toBytes(aggs);
+            if (logger.isDebugEnabled()) {
+                logger.debug("Adding new distinct group: "
+                        + Bytes.toStringBinary(key.get(), key.getOffset(), key.getLength()) + " with aggregators "
+                        + aggs.toString() + " value = " + Bytes.toStringBinary(value));
+            }
+            return new SingleKeyValueTuple(KeyValueUtil.newKeyValue(key.get(), key.getOffset(), key.getLength(),
+                    QueryConstants.SINGLE_COLUMN_FAMILY, QueryConstants.SINGLE_COLUMN, QueryConstants.AGG_TIMESTAMP,
+                    value, 0, value.length));
         }
 
         /**
@@ -340,7 +247,7 @@ public class SpillableGroupByCache implements GroupByCache {
 
     @Override
     public RegionScanner getScanner(final RegionScanner s) {
-        final Iterator<Entry<ImmutableBytesWritable, Aggregator[]>> cacheIter = new EntryIterator();
+        final Iterator<Tuple> cacheIter = new EntryIterator();
 
         // scanner using the spillable implementation
         return new BaseRegionScanner() {
@@ -362,23 +269,13 @@ public class SpillableGroupByCache implements GroupByCache {
             @Override
             public boolean next(List<Cell> results) throws IOException {
                 if (!cacheIter.hasNext()) { return false; }
-                Map.Entry<ImmutableBytesWritable, Aggregator[]> ce = cacheIter.next();
-                ImmutableBytesWritable key = ce.getKey();
-                Aggregator[] aggs = ce.getValue();
-                byte[] value = aggregators.toBytes(aggs);
-                if (logger.isDebugEnabled()) {
-                    logger.debug("Adding new distinct group: "
-                            + Bytes.toStringBinary(key.get(), key.getOffset(), key.getLength()) + " with aggregators "
-                            + aggs.toString() + " value = " + Bytes.toStringBinary(value));
-                }
-                results.add(KeyValueUtil.newKeyValue(key.get(), key.getOffset(), key.getLength(), SINGLE_COLUMN_FAMILY,
-                        SINGLE_COLUMN, AGG_TIMESTAMP, value, 0, value.length));
+                results.add(cacheIter.next().getValue(0));
                 return cacheIter.hasNext();
             }
 
             @Override
             public long getMaxResultSize() {
-              return s.getMaxResultSize();
+                return s.getMaxResultSize();
             }
         };
     }

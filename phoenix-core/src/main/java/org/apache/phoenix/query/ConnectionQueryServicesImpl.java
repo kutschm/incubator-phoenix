@@ -1386,6 +1386,13 @@ public class ConnectionQueryServicesImpl extends DelegateQueryServices implement
                 // Ignore, as this will happen if the SYSTEM.SEQUENCE already exists at this fixed timestamp.
                 // A TableAlreadyExistsException is not thrown, since the table only exists *after* this fixed timestamp.
             }
+            try {                
+                metaConnection.createStatement().executeUpdate(QueryConstants.CREATE_TABLE_SPILLABLE_CACHE);
+            } catch (NewerTableAlreadyExistsException ignore) {
+                // Ignore, as this will happen if the SYSTEM.SPILLABLE_CACHE already exists at this fixed timestamp.
+                // A TableAlreadyExistsException is not thrown, since the table only exists *after* this fixed timestamp.
+            }
+
         } catch (SQLException e) {
             sqlE = e;
         } finally {
