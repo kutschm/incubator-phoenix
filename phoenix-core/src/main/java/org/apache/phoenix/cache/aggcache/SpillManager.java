@@ -289,10 +289,8 @@ public class SpillManager implements ISpillManager<Tuple>, Closeable {
 
         @Override
         public boolean hasNext() {
-            if(!initialized) {
-                return false;
-            }
-            if(spillIter == null) {
+            if (!initialized) { return false; }
+            if (spillIter == null) {
                 spillIter = spillMaps.get(index).iterator();
             }
             if (!spillIter.hasNext()) {
